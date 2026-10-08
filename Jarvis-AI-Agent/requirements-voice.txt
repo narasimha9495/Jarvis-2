@@ -1,0 +1,5 @@
+# Optional: local speech-to-text / text-to-speech (app/core/stt.py, tts.py).
+# Not wired into the dashboard yet. openai-whisper pulls in PyTorch (several GB)
+# and may not support the newest Python version — check before installing.
+openai-whisper>=20231117
+pyttsx3>=2.90
