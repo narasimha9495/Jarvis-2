@@ -1,0 +1,321 @@
+/**
+ * Jarvis HUD face — an animated "scanning" face that reacts to what Jarvis is
+ * doing and speaks replies out loud.
+ *
+ * States (set with JarvisFace.setState):
+ *   idle      slow pulse, eyes blink
+ *   listening mic is open, rings brighten
+ *   thinking  scan line sweeps, rings spin fast
+ *   speaking  mouth moves while the reply is read aloud
+ *   alert     amber (reminders, confirmations)
+ *   error     red flicker
+ *   offline   dimmed, server disconnected
+ *
+ * Voice output uses the browser's built-in speech synthesis (works offline in
+ * Chrome, Edge and Brave). Voice input uses the Web Speech API, which works in
+ * Chrome and Edge; Brave and Firefox don't support it.
+ */
+const JarvisFace = (() => {
+    const STATE_LABELS = {
+        idle: 'STANDBY',
+        listening: 'LISTENING',
+        thinking: 'PROCESSING',
+        speaking: 'SPEAKING',
+        alert: 'ATTENTION',
+        error: 'ERROR',
+        offline: 'OFFLINE',
+    };
+    const BAR_COUNT = 11;
+    const MAX_SPOKEN_CHARS = 420;
+
+    let root, svg, statusEl, captionEl, muteBtn;
+    let bars = [];
+    let state = 'idle';
+    let level = 0;            // mouth energy while speaking (0..1)
+    let voice = null;
+    let muted = false;
+    let revertTimer = null;
+    let recognition = null;
+
+    const storage = {
+        get(key) { try { return localStorage.getItem(key); } catch (_) { return null; } },
+        set(key, v) { try { localStorage.setItem(key, v); } catch (_) { /* private mode */ } },
+    };
+
+    // ── Setup ──
+    function init() {
+        root = document.getElementById('jarvisFace');
+        if (!root) return;
+        svg = root.querySelector('svg');
+        statusEl = document.getElementById('faceStatus');
+        captionEl = document.getElementById('faceCaption');
+        muteBtn = document.getElementById('voiceToggle');
+
+        buildMouth();
+        muted = storage.get('jarvis.muted') === '1';
+        updateMuteButton();
+        if (muteBtn) muteBtn.addEventListener('click', toggleMute);
+
+        if ('speechSynthesis' in window) {
+            pickVoice();
+            speechSynthesis.addEventListener?.('voiceschanged', pickVoice);
+        }
+
+        scheduleBlink();
+        requestAnimationFrame(animate);
+        setState('idle');
+    }
+
+    function buildMouth() {
+        const group = svg.querySelector('#faceMouth');
+        const spacing = 7;
+        const startX = 100 - ((BAR_COUNT - 1) * spacing) / 2;
+        for (let i = 0; i < BAR_COUNT; i++) {
+            const bar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            bar.setAttribute('x', String(startX + i * spacing - 1.75));
+            bar.setAttribute('width', '3.5');
+            bar.setAttribute('rx', '1.75');
+            bar.setAttribute('y', '131');
+            bar.setAttribute('height', '2');
+            group.appendChild(bar);
+            bars.push(bar);
+        }
+    }
+
+    function pickVoice() {
+        const voices = speechSynthesis.getVoices();
+        if (!voices.length) return;
+        // Prefer a calm English voice that ships with Windows / Chrome
+        const preferences = [
+            /Microsoft (Ryan|Guy|George|Thomas)/i,
+            /Google UK English Male/i,
+            /Microsoft .*English \((United Kingdom|India)\)/i,
+            /en-GB/i,
+            /en-IN/i,
+            /en-US/i,
+        ];
+        for (const pattern of preferences) {
+            const match = voices.find(v => pattern.test(v.name) || pattern.test(v.lang));
+            if (match) { voice = match; return; }
+        }
+        voice = voices.find(v => v.lang?.startsWith('en')) || voices[0];
+    }
+
+    // ── State ──
+    function setState(next, { caption, holdMs } = {}) {
+        if (!root) return;
+        clearTimeout(revertTimer);
+        state = STATE_LABELS[next] ? next : 'idle';
+        root.dataset.state = state;
+        if (statusEl) statusEl.textContent = STATE_LABELS[state];
+        if (caption !== undefined && captionEl) captionEl.textContent = caption;
+        if (holdMs) revertTimer = setTimeout(() => setState('idle'), holdMs);
+    }
+
+    // ── Speaking ──
+    function cleanForSpeech(text) {
+        let t = String(text || '')
+            .replace(/https?:\/\/\S+/g, 'link')
+            .replace(/[*`#>_|]/g, '')
+            .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu, '')
+            .replace(/#(\d+)/g, 'number $1')
+            .replace(/\s*\n\s*/g, '. ')
+            .replace(/\s{2,}/g, ' ')
+            .trim();
+        if (t.length > MAX_SPOKEN_CHARS) {
+            const cut = t.slice(0, MAX_SPOKEN_CHARS);
+            const lastStop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '));
+            t = (lastStop > 80 ? cut.slice(0, lastStop + 1) : cut) + ' The full details are on screen.';
+        }
+        return t;
+    }
+
+    function speak(text, { after = 'idle' } = {}) {
+        if (!root) return;
+        const spoken = cleanForSpeech(text);
+        if (captionEl) captionEl.textContent = spoken || '';
+
+        if (!spoken || muted || !('speechSynthesis' in window)) {
+            mouthOnly(spoken, after);
+            return;
+        }
+
+        speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(spoken);
+        if (voice) utter.voice = voice;
+        utter.lang = voice?.lang || 'en-GB';
+        utter.rate = 1.02;
+        utter.pitch = 0.9;
+        let finished = false;
+        const startedAt = performance.now();
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            if (state === 'speaking') setState(after);
+        };
+        utter.onboundary = () => { level = 1; };
+        utter.onend = finish;
+        utter.onerror = (event) => {
+            if (finished) return;
+            // No voice installed / audio blocked: fail instantly → animate silently instead
+            if (performance.now() - startedAt < 400 && event.error !== 'interrupted' && event.error !== 'canceled') {
+                finished = true;
+                mouthOnly(spoken, after);
+            } else {
+                finish();
+            }
+        };
+
+        setState('speaking');
+        // Safety net: some browsers never fire onend (or have no voices at all),
+        // which would leave the face stuck on SPEAKING.
+        revertTimer = setTimeout(finish, 3000 + spoken.length * 90);
+        speechSynthesis.speak(utter);
+    }
+
+    /** Animate the mouth without audio (muted, or no voice available). */
+    function mouthOnly(spoken, after) {
+        setState('speaking');
+        level = 1;
+        revertTimer = setTimeout(() => setState(after), Math.min(4000, 600 + (spoken || '').length * 35));
+    }
+
+    function stopSpeaking() {
+        if ('speechSynthesis' in window) speechSynthesis.cancel();
+        if (state === 'speaking') setState('idle');
+    }
+
+    function toggleMute() {
+        muted = !muted;
+        storage.set('jarvis.muted', muted ? '1' : '0');
+        if (muted) stopSpeaking();
+        updateMuteButton();
+    }
+
+    function updateMuteButton() {
+        if (!muteBtn) return;
+        muteBtn.textContent = muted ? '🔇' : '🔊';
+        muteBtn.title = muted ? 'Voice off — click to let Jarvis speak' : 'Voice on — click to mute Jarvis';
+        muteBtn.setAttribute('aria-pressed', String(!muted));
+    }
+
+    // ── Listening (speech-to-text) ──
+    function voiceInputSupported() {
+        return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+    }
+
+    /**
+     * Start listening. Calls onResult(text) with the final transcript and
+     * onError(message) if it fails. Returns false if unsupported.
+     */
+    function listen({ onResult, onInterim, onError, onEnd } = {}) {
+        const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!Recognition) return false;
+        if (recognition) { recognition.abort(); recognition = null; }
+
+        stopSpeaking();
+        recognition = new Recognition();
+        recognition.lang = navigator.language || 'en-IN';
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+
+        let finalText = '';
+        recognition.onstart = () => setState('listening', { caption: 'Listening…' });
+        recognition.onresult = (event) => {
+            let interim = '';
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const r = event.results[i];
+                if (r.isFinal) finalText += r[0].transcript;
+                else interim += r[0].transcript;
+            }
+            const shown = (finalText + interim).trim();
+            if (captionEl) captionEl.textContent = shown || 'Listening…';
+            onInterim?.(shown);
+        };
+        recognition.onerror = (event) => {
+            const messages = {
+                'not-allowed': 'Microphone permission was denied. Allow it from the address bar.',
+                'service-not-allowed': 'Microphone permission was denied. Allow it from the address bar.',
+                'no-speech': "I didn't hear anything. Try again.",
+                'audio-capture': 'No microphone was found.',
+                'network': 'Voice input needs Chrome or Edge (this browser blocks the speech service).',
+            };
+            if (event.error !== 'aborted') {
+                onError?.(messages[event.error] || `Voice input error: ${event.error}`);
+                setState('error', { holdMs: 2500 });
+            }
+        };
+        recognition.onend = () => {
+            const text = finalText.trim();
+            recognition = null;
+            if (state === 'listening') setState('idle');
+            if (text) onResult?.(text);
+            onEnd?.();
+        };
+        recognition.start();
+        return true;
+    }
+
+    function stopListening() {
+        if (recognition) recognition.stop();
+    }
+
+    function isListening() {
+        return Boolean(recognition);
+    }
+
+    // ── Animation ──
+    function scheduleBlink() {
+        setTimeout(() => {
+            if (root && (state === 'idle' || state === 'speaking')) {
+                root.classList.add('blink');
+                setTimeout(() => root.classList.remove('blink'), 140);
+            }
+            scheduleBlink();
+        }, 2500 + Math.random() * 3500);
+    }
+
+    function animate(time) {
+        const t = time / 1000;
+        level *= 0.92;
+        bars.forEach((bar, i) => {
+            const center = Math.abs(i - (BAR_COUNT - 1) / 2) / ((BAR_COUNT - 1) / 2); // 0 middle → 1 edge
+            let h;
+            switch (state) {
+                case 'speaking': {
+                    const jitter = 0.45 + 0.55 * Math.abs(Math.sin(t * 13 + i * 1.7) * Math.cos(t * 7.3 + i));
+                    h = 3 + (1 - center * 0.6) * 20 * Math.max(level, 0.35) * jitter;
+                    break;
+                }
+                case 'thinking':
+                    h = 2.5 + 5 * (0.5 + 0.5 * Math.sin(t * 6 - i * 0.7));
+                    break;
+                case 'listening':
+                    h = 2.5 + 7 * (1 - center) * (0.5 + 0.5 * Math.sin(t * 4 + i * 0.9));
+                    break;
+                case 'error':
+                    h = 2 + (Math.random() < 0.15 ? 6 * Math.random() : 0);
+                    break;
+                default:
+                    h = 2 + 1.2 * (1 - center) * (0.5 + 0.5 * Math.sin(t * 1.6 + i * 0.4));
+            }
+            bar.setAttribute('height', h.toFixed(2));
+            bar.setAttribute('y', (132 - h / 2).toFixed(2));
+        });
+        requestAnimationFrame(animate);
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+
+    return {
+        setState,
+        speak,
+        stopSpeaking,
+        toggleMute,
+        listen,
+        stopListening,
+        isListening,
+        voiceInputSupported,
+        get state() { return state; },
+    };
+})();

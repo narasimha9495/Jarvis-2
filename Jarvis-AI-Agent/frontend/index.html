@@ -605,6 +605,169 @@
             color: #ff3366;
         }
 
+        /* ── HUD Face ── */
+        .face-panel {
+            --face: #00d4ff;
+            --face-soft: rgba(0, 212, 255, 0.35);
+            display: flex;
+            align-items: center;
+            gap: 28px;
+            padding: 14px 30px;
+            border-bottom: 1px solid var(--border-color);
+            background: radial-gradient(ellipse at 110px 50%, rgba(0, 212, 255, 0.08), transparent 60%);
+            transition: background 0.4s;
+        }
+
+        .face-panel[data-state="listening"] { --face: #4dfcff; --face-soft: rgba(77, 252, 255, 0.5); }
+        .face-panel[data-state="alert"]     { --face: #ffaa00; --face-soft: rgba(255, 170, 0, 0.45); }
+        .face-panel[data-state="error"]     { --face: #ff3366; --face-soft: rgba(255, 51, 102, 0.45); }
+        .face-panel[data-state="offline"]   { --face: #3a5566; --face-soft: rgba(58, 85, 102, 0.2); }
+
+        .face-svg {
+            width: 150px;
+            height: 150px;
+            flex-shrink: 0;
+            overflow: visible;
+            filter: drop-shadow(0 0 6px var(--face-soft));
+            transition: filter 0.4s;
+        }
+
+        .face-svg * { transition: stroke 0.4s, fill 0.4s, stop-color 0.4s; }
+
+        .face-svg .ring, .face-svg .face-boundary, .face-svg .face-head, .face-svg .brow {
+            fill: none;
+            stroke: var(--face);
+        }
+
+        .face-svg .ring {
+            transform-box: view-box;
+            transform-origin: 100px 100px;
+        }
+
+        .ring-outer { opacity: 0.55; stroke-width: 1.2; animation: spin 40s linear infinite; }
+        .ring-mid   { opacity: 0.8;  stroke-width: 2;   animation: spin 22s linear infinite reverse; }
+        .ring-inner { opacity: 0.35; stroke-width: 5;   animation: spin 60s linear infinite; }
+
+        .face-boundary { stroke-width: 0.8; opacity: 0.5; }
+        .face-head { stroke-width: 1.4; opacity: 0.85; }
+        .brow { stroke-width: 1.6; stroke-linecap: round; opacity: 0.7; }
+        .face-grid { opacity: 0.18; }
+        .face-grid-line { stroke: var(--face); stroke-width: 0.4; }
+        .glow-stop { stop-color: var(--face); }
+
+        .face-svg .eyes rect {
+            fill: var(--face);
+            transform-box: fill-box;
+            transform-origin: center;
+            transition: transform 0.12s, fill 0.4s;
+        }
+
+        .face-panel.blink .eyes rect { transform: scaleY(0.1); }
+        .face-svg .mouth rect { fill: var(--face); }
+
+        .scan-line {
+            opacity: 0;
+            animation: scan 2.6s ease-in-out infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes scan {
+            0%   { transform: translateY(0);     opacity: 0; }
+            10%  { opacity: 1; }
+            90%  { opacity: 1; }
+            100% { transform: translateY(170px); opacity: 0; }
+        }
+        @keyframes breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+        @keyframes flicker { 0%, 100% { opacity: 1; } 45% { opacity: 0.4; } 55% { opacity: 0.9; } }
+
+        /* State-specific motion */
+        .face-panel[data-state="idle"] .face-glow { animation: breathe 4s ease-in-out infinite; }
+        .face-panel[data-state="idle"] .scan-line { animation-duration: 6s; }
+
+        .face-panel[data-state="thinking"] .ring-outer { animation-duration: 6s; }
+        .face-panel[data-state="thinking"] .ring-mid   { animation-duration: 3s; }
+        .face-panel[data-state="thinking"] .ring-inner { animation-duration: 10s; opacity: 0.6; }
+        .face-panel[data-state="thinking"] .scan-line  { animation-duration: 1.1s; }
+        .face-panel[data-state="thinking"] .face-svg   { filter: drop-shadow(0 0 12px var(--face-soft)); }
+
+        .face-panel[data-state="listening"] .ring-mid  { animation-duration: 8s; }
+        .face-panel[data-state="listening"] .face-glow { animation: breathe 1.2s ease-in-out infinite; }
+
+        .face-panel[data-state="speaking"] .scan-line  { animation: none; opacity: 0; }
+        .face-panel[data-state="speaking"] .face-svg   { filter: drop-shadow(0 0 10px var(--face-soft)); }
+
+        .face-panel[data-state="alert"] .face-glow     { animation: breathe 0.9s ease-in-out infinite; }
+        .face-panel[data-state="error"] .face-svg      { animation: flicker 0.35s steps(2) 4; }
+        .face-panel[data-state="offline"] .ring, .face-panel[data-state="offline"] .scan-line { animation-play-state: paused; }
+
+        .face-info {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .face-status-row { display: flex; align-items: center; gap: 12px; }
+
+        .face-status {
+            font-family: var(--font-display);
+            font-weight: 700;
+            font-size: 20px;
+            letter-spacing: 5px;
+            color: var(--face);
+            text-shadow: 0 0 10px var(--face-soft);
+            transition: color 0.4s;
+        }
+
+        .face-caption {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--text-dim);
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            min-height: 3.2em;
+        }
+
+        .voice-toggle {
+            margin-left: auto;
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--accent-blue);
+            border-radius: 4px;
+            width: 34px;
+            height: 30px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .voice-toggle:hover { background: var(--bg-hover); border-color: var(--accent-blue); }
+
+        .btn-icon.listening {
+            border-color: #ff3366;
+            color: #ff3366;
+            box-shadow: 0 0 12px rgba(255, 51, 102, 0.5);
+            animation: breathe 1s ease-in-out infinite;
+        }
+
+        @media (max-height: 760px) {
+            .face-svg { width: 104px; height: 104px; }
+            .face-panel { padding: 10px 24px; }
+        }
+
+        @media (max-width: 768px) {
+            .face-svg { width: 96px; height: 96px; }
+            .face-panel { gap: 16px; padding: 10px 16px; }
+            .face-status { font-size: 16px; letter-spacing: 3px; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .face-svg .ring, .scan-line, .face-glow { animation: none !important; }
+        }
+
         /* Responsive */
         @media (max-width: 1024px) {
             .sidebar-left { display: none; } /* Hide left sidebar on medium screens */
@@ -661,6 +824,52 @@
 
         <!-- Center: Chat Interface -->
         <main class="chat-container">
+            <section id="jarvisFace" class="face-panel" data-state="idle" aria-label="Jarvis status">
+                <svg class="face-svg" viewBox="0 0 200 200" aria-hidden="true">
+                    <defs>
+                        <radialGradient id="faceGlowGrad">
+                            <stop offset="0%" class="glow-stop" stop-opacity="0.28"/>
+                            <stop offset="100%" class="glow-stop" stop-opacity="0"/>
+                        </radialGradient>
+                        <linearGradient id="scanGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" class="glow-stop" stop-opacity="0"/>
+                            <stop offset="70%" class="glow-stop" stop-opacity="0.35"/>
+                            <stop offset="100%" class="glow-stop" stop-opacity="0.9"/>
+                        </linearGradient>
+                        <pattern id="faceGridPattern" width="8" height="8" patternUnits="userSpaceOnUse">
+                            <path class="face-grid-line" d="M8 0H0V8"/>
+                        </pattern>
+                        <clipPath id="faceClip"><circle cx="100" cy="100" r="66"/></clipPath>
+                    </defs>
+
+                    <circle class="face-glow" cx="100" cy="100" r="78" fill="url(#faceGlowGrad)"/>
+                    <circle class="ring ring-outer" cx="100" cy="100" r="95" stroke-dasharray="2 5"/>
+                    <circle class="ring ring-mid" cx="100" cy="100" r="85" stroke-dasharray="70 18 14 18 40 22"/>
+                    <circle class="ring ring-inner" cx="100" cy="100" r="75" stroke-dasharray="1 5"/>
+                    <circle class="face-boundary" cx="100" cy="100" r="66"/>
+
+                    <g clip-path="url(#faceClip)">
+                        <rect class="face-grid" x="30" y="30" width="140" height="140" fill="url(#faceGridPattern)"/>
+                        <path class="face-head" d="M100 50 C122 50 136 64 137 86 L136 108 C134 128 120 146 100 152 C80 146 66 128 64 108 L63 86 C64 64 78 50 100 50 Z"/>
+                        <path class="brow" d="M72 84 Q82 79 92 83"/>
+                        <path class="brow" d="M108 83 Q118 79 128 84"/>
+                        <g class="eyes">
+                            <rect x="72" y="92" width="20" height="5" rx="2.5"/>
+                            <rect x="108" y="92" width="20" height="5" rx="2.5"/>
+                        </g>
+                        <g id="faceMouth" class="mouth"></g>
+                        <rect class="scan-line" x="30" y="16" width="140" height="18" fill="url(#scanGrad)"/>
+                    </g>
+                </svg>
+
+                <div class="face-info">
+                    <div class="face-status-row">
+                        <span id="faceStatus" class="face-status">STANDBY</span>
+                        <button id="voiceToggle" class="voice-toggle" type="button" title="Mute Jarvis">🔊</button>
+                    </div>
+                    <div id="faceCaption" class="face-caption">Type a command, or press the mic and talk to me.</div>
+                </div>
+            </section>
             <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
             
             <div id="typingIndicator" class="typing-indicator">
@@ -670,7 +879,7 @@
             </div>
 
             <div class="input-area">
-                <button class="btn-icon" title="Voice input is not available yet" disabled aria-disabled="true">🎤</button>
+                <button id="micBtn" class="btn-icon" type="button" title="Talk to Jarvis" aria-label="Talk to Jarvis">🎤</button>
                 <input type="text" id="messageInput" class="input-box" placeholder="Enter command or query..." autocomplete="off">
                 <button class="btn-icon btn-send" onclick="sendMessage()" title="Send" aria-label="Send">➤</button>
             </div>
@@ -722,6 +931,7 @@
     </div>
 
     <!-- Application Logic -->
+    <script src="/static/js/face.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>

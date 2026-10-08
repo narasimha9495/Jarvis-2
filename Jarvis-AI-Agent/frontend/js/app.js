@@ -35,9 +35,17 @@ function formatMessage(text) {
     return escapeHtml(text)
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         .replace(/`([^`]+?)`/g, '<code>$1</code>')
-        .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
+        .replace(/(https?:\/\/[^\s<]+?)(?=[).,!?;:]*(?:\s|$|&lt;))/g,
+                 '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
         .replace(/\n/g, '<br>');
 }
+
+/** Call the HUD face if it loaded (the dashboard still works without it). */
+function face(method, ...args) {
+    if (typeof JarvisFace !== 'undefined' && JarvisFace[method]) return JarvisFace[method](...args);
+}
+
+let userHasInteracted = false;  // browsers only allow speech after a click/keypress
 
 function oneOf(value, allowed, fallback) {
     return allowed.includes(value) ? value : fallback;
@@ -68,6 +76,7 @@ function connectWebSocket() {
         isConnected = true;
         reconnectDelay = 1000;
         updateConnectionStatus(true);
+        face('setState', 'idle');
     };
 
     ws.onmessage = (event) => {
@@ -80,6 +89,7 @@ function connectWebSocket() {
         isConnected = false;
         hideTypingIndicator();
         updateConnectionStatus(false);
+        face('setState', 'offline', { caption: 'Connection lost. Reconnecting…' });
         setTimeout(connectWebSocket, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 15000);
     };
@@ -93,30 +103,39 @@ function handleMessage(data) {
         case 'welcome':
             hideTypingIndicator();
             addMessage('assistant', data.content);
+            face('setState', 'idle', { caption: data.content });
             if (data.providers) populateProviders(data.providers, data.default_provider);
             break;
         case 'chat':
             hideTypingIndicator();
             addMessage('assistant', data.content);
+            speakReply(data.content);
             break;
         case 'action':
             hideTypingIndicator();
             addMessage('assistant', data.content);
+            speakReply(data.content);
             refreshSidebar();
             break;
         case 'confirm':
             hideTypingIndicator();
             showConfirmation(data);
+            face('setState', 'alert', { caption: 'Waiting for your confirmation.' });
+            speakReply('I need your confirmation before I do that.', 'alert');
             break;
         case 'reminder':
             addMessage('assistant', data.content, 'reminder');
             showDesktopNotification(data.content);
+            face('setState', 'alert');
+            speakReply(data.content, 'idle');
             loadReminders();
             break;
         case 'error':
         case 'status':
             hideTypingIndicator();
             addMessage('assistant', `⚠️ ${data.content}`, 'error');
+            face('stopSpeaking');
+            face('setState', 'error', { caption: data.content, holdMs: 3000 });
             break;
         case 'pong':
             break;
@@ -137,6 +156,7 @@ function sendMessage() {
     }
 
     askNotificationPermission();
+    face('stopSpeaking');
     addMessage('user', text);
     showTypingIndicator();
 
@@ -164,6 +184,7 @@ function addMessage(role, content, variant = '') {
 function showTypingIndicator() {
     const el = document.getElementById('typingIndicator');
     if (el) el.classList.add('visible');
+    face('setState', 'thinking', { caption: 'Analyzing…' });
     clearTimeout(typingTimer);
     typingTimer = setTimeout(() => {
         hideTypingIndicator();
@@ -207,6 +228,8 @@ function showConfirmation(data) {
 }
 
 function answerConfirmation(approved) {
+    face('stopSpeaking');
+    if (!approved) face('setState', 'idle');
     if (pendingConfirmation && ws && isConnected) {
         if (approved) showTypingIndicator();
         ws.send(JSON.stringify({
@@ -454,6 +477,48 @@ async function switchProvider(provider) {
     }
 }
 
+// ── Voice ──
+/** Read a reply aloud (only after the user has interacted with the page). */
+function speakReply(text, after = 'idle') {
+    if (userHasInteracted) {
+        face('speak', text, { after });
+    } else {
+        face('setState', after === 'alert' ? 'alert' : 'idle', { caption: text });
+    }
+}
+
+function setupVoiceInput() {
+    const mic = document.getElementById('micBtn');
+    if (!mic) return;
+
+    const supported = typeof JarvisFace !== 'undefined' && JarvisFace.voiceInputSupported();
+    if (!supported) {
+        mic.title = 'Voice input needs Chrome or Edge';
+    }
+
+    mic.addEventListener('click', () => {
+        if (!supported) {
+            addMessage('assistant', '⚠️ Voice input isn\'t supported in this browser. Open Jarvis in **Chrome** or **Edge** to talk to me — I can still speak replies here.', 'error');
+            return;
+        }
+        if (JarvisFace.isListening()) {
+            JarvisFace.stopListening();
+            return;
+        }
+        const input = document.getElementById('messageInput');
+        mic.classList.add('listening');
+        JarvisFace.listen({
+            onInterim: (text) => { input.value = text; },
+            onResult: (text) => {
+                input.value = text;
+                sendMessage();
+            },
+            onError: (message) => addMessage('assistant', `⚠️ ${message}`, 'error'),
+            onEnd: () => mic.classList.remove('listening'),
+        });
+    });
+}
+
 // ── Initialize ──
 document.addEventListener('DOMContentLoaded', async () => {
     try {
@@ -465,6 +530,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectWebSocket();
     refreshSidebar();
     setInterval(loadSystemStatus, 15000);
+    setupVoiceInput();
+
+    ['pointerdown', 'keydown'].forEach(evt =>
+        document.addEventListener(evt, () => { userHasInteracted = true; }, { once: true, capture: true }));
 
     const input = document.getElementById('messageInput');
     if (input) {
